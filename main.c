@@ -3505,12 +3505,12 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
   if (to_set & FUSE_SET_ATTR_GID)
     gid = get_gid (lo, attr->st_gid);
 
+  int dirfd = node_dirfd (node);	
   if (fi != NULL)
     fd = fi->fh;  // use existing fd if fuse_file_info is available
   else
     {
       mode_t mode = node->ino->mode;
-      int dirfd = node_dirfd (node);
 
       if (mode == 0)
         {
@@ -3581,10 +3581,10 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
 
   if (times[0].tv_sec != UTIME_OMIT || times[1].tv_sec != UTIME_OMIT)
     {
-      if (fd >= 0)
-        ret = futimens (fd, times);
-      else
-        ret = utimensat (AT_FDCWD, path, times, AT_SYMLINK_NOFOLLOW);
+      //      if (fd >= 0)
+      //        ret = futimens (fd, times);
+      //      else
+      ret = utimensat (dirfd, node->path, times, AT_SYMLINK_NOFOLLOW);
       if (ret < 0)
         {
           fuse_reply_err (req, errno);
