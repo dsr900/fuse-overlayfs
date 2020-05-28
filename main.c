@@ -141,7 +141,8 @@ open_by_handle_at (int mount_fd, struct file_handle *handle, int flags)
 #define XATTR_PREFIX "user.fuseoverlayfs."
 #define ORIGIN_XATTR "user.fuseoverlayfs.origin"
 #define OPAQUE_XATTR "user.fuseoverlayfs.opaque"
-#define PRIVILEGED_XATTR_PREFIX "trusted.overlay."
+//#define PRIVILEGED_XATTR_PREFIX "trusted.overlay."
+#define PRIVILEGED_XATTR_PREFIX "trusted."
 #define PRIVILEGED_OPAQUE_XATTR "trusted.overlay.opaque"
 #define PRIVILEGED_ORIGIN_XATTR "trusted.overlay.origin"
 #define OPAQUE_WHITEOUT ".wh..wh..opq"
@@ -2197,7 +2198,8 @@ ovl_listxattr (fuse_req_t req, fuse_ino_t ino, size_t size)
   ssize_t len;
   struct ovl_node *node;
   struct ovl_data *lo = ovl_data (req);
-  cleanup_free char *buf = NULL;
+  cleanup_free char *buf_in  = NULL;
+  cleanup_free char *buf_out = NULL;
   int ret;
 
   if (UNLIKELY (ovl_debug (req)))
@@ -2218,8 +2220,8 @@ ovl_listxattr (fuse_req_t req, fuse_ino_t ino, size_t size)
 
   if (size > 0)
     {
-      buf = malloc (size);
-      if (buf == NULL)
+      buf_in = malloc (size);
+      if (buf_in == NULL)
         {
           fuse_reply_err (req, ENOMEM);
           return;
@@ -2227,12 +2229,12 @@ ovl_listxattr (fuse_req_t req, fuse_ino_t ino, size_t size)
     }
 
   if (! node->hidden)
-    ret = node->layer->ds->listxattr (node->layer, node->path, buf, size);
+    ret = node->layer->ds->listxattr (node->layer, node->path, buf_in, size);
   else
     {
       char path[PATH_MAX];
       strconcat3 (path, PATH_MAX, lo->workdir, "/", node->path);
-      ret = listxattr (path, buf, size);
+      ret = listxattr (path, buf_in, size);
     }
   if (ret < 0)
     {
@@ -2242,10 +2244,44 @@ ovl_listxattr (fuse_req_t req, fuse_ino_t ino, size_t size)
 
   len = ret;
 
+  // Filter out xattrs starting with PRIVILEGED_XATTR_PREFIX
+  // dsr900
+  int in_buf_offset = 0;
+  int out_buf_offset = 0;
+  int rc;
+
+  if ( len > 0 && size > 0 )
+    {
+      buf_out = malloc(len);
+      if ( buf_out == NULL )
+	{
+	  fuse_reply_err (req, ENOMEM);
+	  return;
+	}
+
+      while ( in_buf_offset < len ) {
+	if (has_prefix (buf_in + in_buf_offset, PRIVILEGED_XATTR_PREFIX) || has_prefix (buf_in + in_buf_offset, XATTR_PREFIX))
+	  {
+	    in_buf_offset+=( strlen(buf_in+in_buf_offset) + 1 );
+	    continue;
+	  }
+	rc = sprintf(buf_out + out_buf_offset,"%s",buf_in + in_buf_offset);
+	if ( rc < 0 )
+	  {
+	    fuse_reply_err (req, ENOMEM);
+	    return;
+	  }
+	out_buf_offset+=( strlen( buf_out+out_buf_offset) + 1 );
+	in_buf_offset+=( strlen( buf_in+in_buf_offset) + 1 );
+      }
+    }
+  
   if (size == 0)
     fuse_reply_xattr (req, len);
-  else if (len <= size)
-    fuse_reply_buf (req, buf, len);
+  //  else if (len <= size)
+    // fuse_reply_buf (req, buf, len);
+  else if ( out_buf_offset <= size )
+    fuse_reply_buf (req, buf_out, out_buf_offset);
 }
 
 static void
